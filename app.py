@@ -1,5 +1,5 @@
 # ====================================================================
-# 📱 APP MÓVIL: SISTEMA CUANTITATIVO MAESTRO v2.1 (STREAMLIT)
+# 📱 APP MÓVIL: SISTEMA CUANTITATIVO MAESTRO v2.2 (STREAMLIT)
 # ====================================================================
 import streamlit as st
 import numpy as np
@@ -13,25 +13,33 @@ st.set_page_config(page_title="Quant Betting LaLiga", page_icon="⚽", layout="c
 API_KEY_APISPORTS = "5d4b983949bcb2227b0cd1a3b1641803"
 HEADERS = {'x-apisports-key': API_KEY_APISPORTS}
 
-st.title("⚽ Sistema Cuantitativo v2.1")
+st.title("⚽ Sistema Cuantitativo v2.2")
 st.markdown("### Quiniela & Bwin Value Betting")
 
-# --- PANEL DE CONFIGURACIÓN LATERAL (CAJAS Y GESTIÓN DE RIESGO) ---
-st.sidebar.header("💰 Gestión de Bankroll (1.000€ Total)")
-bankroll_bwin = st.sidebar.number_input("Bankroll Bwin (€ - 30%)", value=300.0, step=50.0)
-bankroll_quiniela = st.sidebar.number_input("Bankroll Quiniela (€ - 70%)", value=700.0, step=50.0)
+# --- PANEL DE CONFIGURACIÓN LATERAL (CAJAS ACTUALIZABLES) ---
+st.sidebar.header("💶 Actualización de Bankroll")
+bankroll_bwin = st.sidebar.number_input("Bankroll Bwin actual (€)", value=300.0, step=10.0, format="%.2f")
+bankroll_quiniela = st.sidebar.number_input("Bankroll Quiniela actual (€)", value=700.0, step=10.0, format="%.2f")
 
 liga_seleccionada = st.sidebar.selectbox("Competición", ["LaLiga (Primera)", "Segunda División"])
 league_id = 140 if "Primera" in liga_seleccionada else 141
 
 st.sidebar.markdown("---")
-st.sidebar.header("🏥 Control de Bajas")
-equipo_baja = st.sidebar.text_input("Equipo con bajas (Ej: Barcelona)")
-factor_baja = st.sidebar.slider("Impacto xG (1.0 = Normal, 0.8 = Baja Clave)", 0.5, 1.0, 0.85)
+st.sidebar.header("🏥 Control de Bajas Múltiples")
+st.sidebar.caption("Añade los equipos que tengan bajas esta jornada y ajusta su impacto.")
+
+# Control dinámico de múltiples bajas
+num_bajas = st.sidebar.number_input("¿Cuántos equipos tienen bajas notables?", min_value=0, max_value=5, value=0, step=1)
 
 bajas_dict = {}
-if equipo_baja:
-    bajas_dict[equipo_baja] = factor_baja
+for i in range(int(num_bajas)):
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        eq = st.text_input(f"Equipo {i+1}", key=f"eq_{i}")
+    with col2:
+        val = st.slider(f"Impacto {i+1}", 0.5, 1.0, 0.85, key=f"val_{i}")
+    if eq:
+        bajas_dict[eq.strip()] = val
 
 # --- FUNCIONES DEL MOTOR ---
 def obtener_partidos(league_id, season=2026):
@@ -52,7 +60,6 @@ def obtener_partidos(league_id, season=2026):
                 'away_team': away,
                 'xG_Loc': [1.2, 1.5, 2.0, 1.1, 1.6], 
                 'xG_Vis': [0.9, 1.0, 1.3, 0.8, 1.1],
-                # Porcentajes de la masa por defecto (Modificables si se desea)
                 'LAE_1': 0.50, 'LAE_X': 0.25, 'LAE_2': 0.25
             })
         return partidos
@@ -84,8 +91,10 @@ if st.button("🚀 Ejecutar Análisis Quant de la Jornada", type="primary"):
         else:
             partidos_procesados = []
             for d in datos_api:
+                # Comprobamos bajas acumuladas en el diccionario
                 f_loc = bajas_dict.get(d['home_team'], 1.0)
                 f_vis = bajas_dict.get(d['away_team'], 1.0)
+                
                 xg_loc_suio = [x * f_loc for x in d['xG_Loc']]
                 xg_vis_suio = [x * f_vis for x in d['xG_Vis']]
                 
@@ -108,7 +117,7 @@ if st.button("🚀 Ejecutar Análisis Quant de la Jornada", type="primary"):
             
             with tab1:
                 st.subheader("Boletos Óptimos de Quiniela")
-                st.info(f"💶 Bankroll asignado a Quiniela: **{bankroll_quiniela} €** (Ideal para financiar las columnas de la jornada).")
+                st.info(f"💶 Bankroll actual de Quiniela: **{bankroll_quiniela:.2f} €**")
                 
                 validas = []
                 for _ in range(5000):
@@ -133,7 +142,7 @@ if st.button("🚀 Ejecutar Análisis Quant de la Jornada", type="primary"):
 
             with tab2:
                 st.subheader("Apuestas Combinadas Bwin (+EV)")
-                st.info(f"💶 Bankroll asignado a Bwin: **{bankroll_bwin} €** (Stakes calculados por Criterio de Kelly).")
+                st.info(f"💶 Bankroll actual de Bwin: **{bankroll_bwin:.2f} €** (Stakes reajustados por Kelly).")
                 
                 value_bets = []
                 for _, row in df_res.iterrows():
