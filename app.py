@@ -1,5 +1,5 @@
 # ====================================================================
-# 📱 APP MÓVIL: SISTEMA CUANTITATIVO MAESTRO (STREAMLIT)
+# 📱 APP MÓVIL: SISTEMA CUANTITATIVO MAESTRO v2.1 (STREAMLIT)
 # ====================================================================
 import streamlit as st
 import numpy as np
@@ -8,18 +8,19 @@ import itertools
 import requests
 from scipy.stats import poisson
 
-# Configuración de la página para dispositivos móviles
 st.set_page_config(page_title="Quant Betting LaLiga", page_icon="⚽", layout="centered")
 
 API_KEY_APISPORTS = "5d4b983949bcb2227b0cd1a3b1641803"
 HEADERS = {'x-apisports-key': API_KEY_APISPORTS}
 
-st.title("⚽ Sistema Cuantitativo v2.0")
-st.markdown("### Quiniela & Bwin Value Betting (LaLiga & Segunda)")
+st.title("⚽ Sistema Cuantitativo v2.1")
+st.markdown("### Quiniela & Bwin Value Betting")
 
-# --- PANEL DE CONFIGURACIÓN LATERAL (CONTROL HUMANO) ---
-st.sidebar.header("⚙️ Configuración de Caja")
-bankroll_bwin = st.sidebar.number_input("Bankroll Bwin (€)", value=300.0, step=50.0)
+# --- PANEL DE CONFIGURACIÓN LATERAL (CAJAS Y GESTIÓN DE RIESGO) ---
+st.sidebar.header("💰 Gestión de Bankroll (1.000€ Total)")
+bankroll_bwin = st.sidebar.number_input("Bankroll Bwin (€ - 30%)", value=300.0, step=50.0)
+bankroll_quiniela = st.sidebar.number_input("Bankroll Quiniela (€ - 70%)", value=700.0, step=50.0)
+
 liga_seleccionada = st.sidebar.selectbox("Competición", ["LaLiga (Primera)", "Segunda División"])
 league_id = 140 if "Primera" in liga_seleccionada else 141
 
@@ -32,7 +33,7 @@ bajas_dict = {}
 if equipo_baja:
     bajas_dict[equipo_baja] = factor_baja
 
-# --- FUNCIONES DEL MOTOR (BACKEND) ---
+# --- FUNCIONES DEL MOTOR ---
 def obtener_partidos(league_id, season=2026):
     url_fixtures = "https://v3.football.api-sports.io/fixtures"
     params = {'league': league_id, 'season': season, 'next': 10}
@@ -51,6 +52,7 @@ def obtener_partidos(league_id, season=2026):
                 'away_team': away,
                 'xG_Loc': [1.2, 1.5, 2.0, 1.1, 1.6], 
                 'xG_Vis': [0.9, 1.0, 1.3, 0.8, 1.1],
+                # Porcentajes de la masa por defecto (Modificables si se desea)
                 'LAE_1': 0.50, 'LAE_X': 0.25, 'LAE_2': 0.25
             })
         return partidos
@@ -73,30 +75,26 @@ def calcular_prob_dixon_coles(lambda_local, mu_visitante, rho=-0.15, max_goles=7
             round(np.triu(matriz_ajustada, 1).sum(), 4))
 
 # --- BOTÓN DE EJECUCIÓN PRINCIPAL ---
-if st.button("🚀 Ejecutar Análisis de la Jornada", type="primary"):
-    with st.spinner("Conectando con API-Sports y procesando modelos matemáticos..."):
+if st.button("🚀 Ejecutar Análisis Quant de la Jornada", type="primary"):
+    with st.spinner("Procesando modelos matemáticos (EMA, HFA, Dixon-Coles)..."):
         datos_api = obtener_partidos(league_id)
         
         if not datos_api:
-            st.warning("ℹ️ No hay partidos próximos activos en este momento (posible parón de selecciones).")
+            st.warning("ℹ️ No hay partidos próximos activos en este momento (parón de selecciones).")
         else:
             partidos_procesados = []
             for d in datos_api:
-                # Bajas
                 f_loc = bajas_dict.get(d['home_team'], 1.0)
                 f_vis = bajas_dict.get(d['away_team'], 1.0)
                 xg_loc_suio = [x * f_loc for x in d['xG_Loc']]
                 xg_vis_suio = [x * f_vis for x in d['xG_Vis']]
                 
-                # EMA
                 ema_l = pd.Series(xg_loc_suio).ewm(span=5, adjust=False).mean().iloc[-1]
                 ema_v = pd.Series(xg_vis_suio).ewm(span=5, adjust=False).mean().iloc[-1]
                 
-                # HFA
                 l_hfa = ema_l * 1.12
                 v_hfa = ema_v * 0.88
                 
-                # Dixon-Coles
                 p1, px, p2 = calcular_prob_dixon_coles(l_hfa, v_hfa)
                 
                 partidos_procesados.append({
@@ -106,11 +104,12 @@ if st.button("🚀 Ejecutar Análisis de la Jornada", type="primary"):
             
             df_res = pd.DataFrame(partidos_procesados)
             
-            # PESTAÑAS DE RESULTADOS
             tab1, tab2 = st.tabs(["🎟️ Quinielas (+EV)", "🎯 Tickets Bwin"])
             
             with tab1:
                 st.subheader("Boletos Óptimos de Quiniela")
+                st.info(f"💶 Bankroll asignado a Quiniela: **{bankroll_quiniela} €** (Ideal para financiar las columnas de la jornada).")
+                
                 validas = []
                 for _ in range(5000):
                     col, pr_tot, pl_tot, var, sorp = [], 1.0, 1.0, 0, 0
@@ -134,6 +133,8 @@ if st.button("🚀 Ejecutar Análisis de la Jornada", type="primary"):
 
             with tab2:
                 st.subheader("Apuestas Combinadas Bwin (+EV)")
+                st.info(f"💶 Bankroll asignado a Bwin: **{bankroll_bwin} €** (Stakes calculados por Criterio de Kelly).")
+                
                 value_bets = []
                 for _, row in df_res.iterrows():
                     c_1 = round(1 / (row['Prob_1'] - 0.02), 2) if row['Prob_1'] > 0.1 else 8.0
@@ -153,7 +154,7 @@ if st.button("🚀 Ejecutar Análisis de la Jornada", type="primary"):
                         c_tot = np.prod([s['c'] for s in comb])
                         if min_c <= c_tot <= max_c:
                             stake = bankroll_bwin * pct
-                            st.write(f"💰 Cuota: **{c_tot:.2f}** | 💶 Stake: **{stake:.2f} €**")
+                            st.write(f"💰 Cuota Total: **{c_tot:.2f}** | 💶 Stake recomendado: **{stake:.2f} €**")
                             for s in comb:
                                 st.caption(f"• {s['partido']} -> {s['merc']} (Cuota: {s['c']})")
                             encontrado = True
